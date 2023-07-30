@@ -1,14 +1,16 @@
 ;;; deft.el --- Notes -*- lexical-binding: t -*-
 
 ;;; Author: Jason R. Blevins <jrblevin@xbeta.org>
-;;; Version: 0.8
+;;;         scturtle <scturtle@gmail.com>
+;;; Version: 0.9
 ;;; Package-Requires: ((emacs "28.1"))
 ;;; Keywords: files, matching, outlines
 ;;; URL: https://jblevins.org/projects/deft/
+;;;      https://github.com/scturtle/deft
 
 ;;; Commentary:
 
-;; Notes management.
+;;; Notes management.
 
 ;;; Code:
 
@@ -26,8 +28,6 @@
   :type 'directory
   :safe 'stringp
   :group 'deft)
-
-(make-obsolete-variable 'deft-extension 'deft-extensions "v0.6")
 
 (defcustom deft-extensions
   (if (boundp 'deft-extension)
@@ -54,11 +54,6 @@ The default value yields a short ISO-like timestamp, as in
 example, set this variable to \"%FT%T%z\".  See
 `format-time-string' for possible format controls."
   :type 'string
-  :group 'deft)
-
-(defcustom deft-case-fold-search t
-  "If non-nil, searching is case-insensitive."
-  :type 'boolean
   :group 'deft)
 
 (defcustom deft-incremental-search t
@@ -108,17 +103,6 @@ Presently removes blank lines and `org-mode' metadata statements."
   :safe 'stringp
   :group 'deft)
 
-(defcustom deft-file-limit nil
-  "Maximum number of files to list in the Deft browser.
-Set this to an integer value if you have a large number of files
-and are experiencing performance degradation.  This is the
-maximum number of files to display in the Deft buffer.  When
-set to nil, there is no limit."
-  :type '(choice (integer :tag "Limit number of files displayed")
-                 (const :tag "No limit" nil))
-  :group 'deft
-  :package-version '(deft . "0.9"))
-
 ;; Faces
 
 (defgroup deft-faces nil
@@ -144,6 +128,11 @@ set to nil, there is no limit."
 (defface deft-title-face
   '((t :inherit font-lock-function-name-face :bold t))
   "Face for Deft file titles."
+  :group 'deft-faces)
+
+(defface deft-tags-face
+  '((t :inherit font-lock-string-face))
+  "Face for Deft file tags."
   :group 'deft-faces)
 
 (defface deft-summary-face
@@ -183,7 +172,7 @@ regexp.")
 
 (defvar deft-hash-properties nil
   "Hash containing properties for each file,keyed by filename.
-Properties are `content', `mtime', `title', `summary'.")
+Properties are `content', `mtime', `title', `tags', `summary'.")
 
 (defvar deft-window-width nil
   "Width of Deft buffer.")
@@ -216,9 +205,8 @@ Properties are `content', `mtime', `title', `summary'.")
     ;; Handle return via completion or opening file
     (define-key map (kbd "RET") 'deft-complete)
     ;; Filtering
-    (define-key map (kbd "C-c C-l") 'deft-filter)
     (define-key map (kbd "C-c C-c") 'deft-filter-clear)
-    (define-key map (kbd "C-y") 'deft-filter-yank)
+    (define-key map (kbd "C-c C-y") 'deft-filter-yank)
     ;; File creation
     (define-key map (kbd "C-c C-m") 'deft-new-file-named)
     (define-key map (kbd "<C-return>") 'deft-new-file-named)
@@ -228,15 +216,13 @@ Properties are `content', `mtime', `title', `summary'.")
     ;; Settings
     (define-key map (kbd "C-c C-t") 'deft-toggle-incremental-search)
     ;; Miscellaneous
-    (define-key map (kbd "C-c C-g") 'deft-refresh)
+    (define-key map (kbd "C-c C-f") 'deft-refresh)
     (define-key map (kbd "C-c C-q") 'quit-window)
     ;; Buttons
-    ;; (define-key map [down-mouse-1] 'widget-button-click)
-    ;; (define-key map [down-mouse-2] 'widget-button-click)
     (define-key map (kbd "<tab>") 'forward-button)
     (define-key map (kbd "<backtab>") 'backward-button)
     (define-key map (kbd "<S-tab>") 'backward-button)
-    (define-key map (kbd "C-o") 'deft-open-file-other-window)
+    (define-key map (kbd "C-c C-o") 'deft-open-file-other-window)
     map)
   "Keymap for Deft mode.")
 
@@ -245,15 +231,6 @@ Properties are `content', `mtime', `title', `summary'.")
 (defun deft-whole-filter-regexp ()
   "Join incremental filters into one."
   (mapconcat 'identity (reverse deft-filter-regexp) " "))
-
-(defun deft-search-forward (str)
-  "Function to use when matching files against filter strings STR.
-This function calls `search-forward' when `deft-incremental-search'
-is non-nil and `re-search-forward' otherwise."
-  (let ((case-fold-search deft-case-fold-search))
-    (if deft-incremental-search
-        (search-forward str nil t)
-      (re-search-forward str nil t))))
 
 (defun deft-toggle-incremental-search ()
   "Toggle the `deft-incremental-search' setting."
@@ -294,15 +271,7 @@ is the complete regexp."
             (deft-find-all-files))))
 
 (defun deft-find-files (dir)
-  "Return a list of all files in the directory DIR.
-
-It is important to note that the return value is a list of
-absolute filenames.  These absolute filenames are used as keys
-for the various hash tables used for storing file metadata and
-contents.  So, any functions looking up values in these hash
-tables should use `expand-file-name' on filenames first.
-
-See `deft-find-all-files'."
+  "Return a list of all files in the directory DIR."
   (when (file-exists-p dir)
     (let ((files (directory-files dir t "." t))
           (result nil))
@@ -314,13 +283,20 @@ See `deft-find-all-files'."
           (push file result)))
       result)))
 
-(defun deft-parse-title (_ contents)
+(defun deft-parse-title (contents)
   "Parse the given CONTENTS and determine the title."
-  (let ((begin (string-match "^.+$" contents)))
-    (when begin
-      (let ((title (substring contents begin (match-end 0))))
-        (string-trim
-         (replace-regexp-in-string deft-strip-title-regexp "" title))))))
+  (when-let ((begin (string-match "^.+$" contents)))
+    (let ((title (substring contents begin (match-end 0))))
+      (string-trim
+       (replace-regexp-in-string deft-strip-title-regexp "" title)))))
+
+(defun deft-parse-tags (contents)
+  "Parse the given CONTENTS and return list of tags."
+  (let ((case-fold-search t))
+    (when (string-match "#\\+FILETAGS:\\(.*\\)$" contents)
+      (mapcan
+       (lambda (k) (cl-remove-if #'string-empty-p (split-string k ":")))
+       (split-string (match-string 1 contents))))))
 
 (defun deft-cache-file (file)
   "Update file cache if FILE exists and outdated."
@@ -336,23 +312,17 @@ See `deft-find-all-files'."
 (defun deft-cache-newer-file (file mtime)
   "Update cached information for FILE with given MTIME."
   (let* ((contents (f-read-text file))
-         (title (deft-parse-title file contents))
+         (title (deft-parse-title contents))
+         (tags (deft-parse-tags contents))
          (summary (string-trim-left
                    (replace-regexp-in-string
                     deft-strip-summary-regexp " " contents))))
     (puthash file `((mtime . ,mtime)
                     (contents . ,contents)
                     (title . ,title)
+                    (tags . ,tags)
                     (summary . ,summary))
              deft-hash-properties)))
-
-(defun deft-file-title-lessp (file1 file2)
-  "Return non-nil if FILE1 title is lexicographically less than FILE2's.
-Case is ignored."
-  (let ((t1 (deft-file-title file1))
-        (t2 (deft-file-title file2)))
-    (string-lessp (and t1 (downcase t1))
-                  (and t2 (downcase t2)))))
 
 (defun deft-sort-all-files ()
   "Sort FILES in reverse order by modified time."
@@ -383,6 +353,10 @@ Case is ignored."
   "Retrieve title of FILE from cache."
   (alist-get 'title (gethash file deft-hash-properties)))
 
+(defun deft-file-tags (file)
+  "Retrieve tags of FILE from cache."
+  (alist-get 'tags (gethash file deft-hash-properties)))
+
 (defun deft-file-summary (file)
   "Retrieve summary of FILE from cache."
   (alist-get 'summary (gethash file deft-hash-properties)))
@@ -411,7 +385,7 @@ Otherwise, we reduce the line length by a one-character offset."
     (when window
       (- (window-text-width window) offset))))
 
-(defun deft-buffer-setup (&optional refresh)
+(defun deft-buffer-render (&optional refresh)
   "Render the file browser in the *Deft* buffer.
 When REFRESH is true, attempt to restore the point afterwards."
   (let ((orig-line (line-number-at-pos))
@@ -445,9 +419,7 @@ When REFRESH is true, attempt to restore the point afterwards."
     (forward-char (if refresh orig-col 0))))
 
 (defun deft-string-width (str)
-  "Return 0 if STR is nil and call `string-width` otherwise.
-This is simply a wrapper function for `string-width' which
-handles nil values gracefully."
+  "Return 0 if STR is nil and call `string-width` otherwise."
   (if str (string-width str) 0))
 
 (define-button-type 'deft-button
@@ -469,11 +441,19 @@ handles nil values gracefully."
            (title (if full-title
                       (truncate-string-to-width full-title title-width)
                     "[Empty file]"))
+           (full-tags (string-join (deft-file-tags file) " "))
+           (tags-width (min (- line-width title-width 1)
+                            (deft-string-width full-tags)))
+           (tags (truncate-string-to-width full-tags tags-width))
            (summary-width (min (deft-string-width summary)
-                               (- line-width title-width 1))))
+                               (- line-width title-width 1
+                                  (if (> tags-width 0) (+ tags-width 1) 0)))))
       (insert-text-button title
                           'type 'deft-button
                           'tag file)
+      (when (> tags-width 0)
+        (insert " ")
+        (insert (propertize tags 'face 'deft-tags-face)))
       (when (> summary-width 0)
         (insert " ")
         (insert (propertize (truncate-string-to-width summary summary-width)
@@ -525,7 +505,7 @@ Call this after any actions which update the cache."
 Call this function after any actions which update the filter and file list."
   (when (get-buffer deft-buffer)
     (with-current-buffer deft-buffer
-      (deft-buffer-setup t))))
+      (deft-buffer-render t))))
 
 ;; File list file management actions
 
@@ -632,42 +612,44 @@ If the point is not on a file button, do nothing."
 
 ;; File list filtering
 
-(defun deft-filter-match-file (file &optional batch)
-  "Return FILE if it is a match against the current filter regexp.
-If BATCH is non-nil, treat `deft-filter-regexp' as a list and match
-all elements."
+(defun deft-search-forward (str)
+  "Function to use when matching files against filter strings STR.
+This function calls `search-forward' when `deft-incremental-search'
+is non-nil and `re-search-forward' otherwise."
+  (let ((case-fold-search t))  ;; case in-sensitive
+    (if deft-incremental-search
+        (search-forward str nil t)
+      (re-search-forward str nil t))))
+
+(defun deft-filter-match-file (file)
+  "Return FILE if it is a match against the current filter regexp."
   (with-temp-buffer
     (insert file)
     (let ((title (deft-file-title file))
+          (tags (deft-file-tags file))
           (contents (deft-file-contents file)))
       (when title (insert title))
-      (when contents (insert contents)))
-    (if batch
-        (if (cl-every (lambda (filter)
-                        (goto-char (point-min))
-                        (deft-search-forward filter))
-                      deft-filter-regexp)
-            file)
-      (goto-char (point-min))
-      (if (deft-search-forward (car deft-filter-regexp))
-          file))))
+      (when contents (insert contents))
+      (cl-every
+       (lambda (filter)
+         ;; if filter starts with ":", match it with tags of file
+         (if (string-prefix-p ":" filter)
+             (cl-some (lambda (tag) (string-prefix-p (substring filter 1) tag)) tags)
+           (goto-char (point-min))
+           (deft-search-forward filter)))
+       deft-filter-regexp))))
 
 (defun deft-filter-files (files)
-  "Update `deft-current-files' given a list of paths, FILES.
-Apply `deft-filter-match-file' to `deft-all-files', handling
-any errors that occur."
-  (delq nil
-        (condition-case nil
-            ;; Map `deft-filter-match-file' onto FILES.  Return
-            ;; filtered files list and clear error flag if no error.
-            (progn
-              (setq deft-regexp-error nil)
-              (mapcar (lambda (file) (deft-filter-match-file file t)) files))
-          ;; Upon an error (`invalid-regexp'), set an error flag
-          (error
-           (progn
-             (setq deft-regexp-error t)
-             files)))))
+  "Filter FILES with `deft-filter-match-file'."
+  (condition-case nil
+      (progn
+        (setq deft-regexp-error nil)
+        (cl-remove-if-not 'deft-filter-match-file files))
+    ;; Upon an error (`invalid-regexp'), set an error flag
+    (error
+     (progn
+       (setq deft-regexp-error t)
+       files))))
 
 (defun deft-filter-update ()
   "Update the filtered files list using the current filter regexp.
@@ -799,16 +781,10 @@ open the first matching file."
   (when (equal major-mode 'deft-mode)
     (let ((link (concat "deft:" (file-name-nondirectory (deft-filename-at-point))))
           (title (deft-file-title (deft-filename-at-point))))
-      (if (fboundp 'org-link-store-props)
-          (org-link-store-props
-           :type "deft"
-           :link link
-           :description title)
-        (with-no-warnings ;; TODO: remove when function is deprecated
-          (org-store-link-props
-           :type "deft"
-           :link link
-           :description title))))))
+      (org-link-store-props
+       :type "deft"
+       :link link
+       :description title))))
 
 (defun deft--org-follow-link (handle)
   (org-open-file (expand-file-name handle deft-directory)))
@@ -845,7 +821,7 @@ open the first matching file."
   (setq deft-hash-properties (make-hash-table :test 'equal))
   (deft-cache-update-all)
   (setq deft-current-files deft-all-files)
-  (deft-buffer-setup)
+  (deft-buffer-render)
 
   (add-hook 'window-size-change-functions
             'deft-window-size-change-function t)
