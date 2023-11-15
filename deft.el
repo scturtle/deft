@@ -42,10 +42,8 @@ not set."
   :group 'deft)
 
 (defcustom deft-time-format " %Y-%m-%d %H:%M"
-  "Format string for modification times in the Deft browser.
-Set to nil to hide."
-  :type '(choice (string :tag "Time format")
-                 (const :tag "Hide" nil))
+  "Format string for modification times in the Deft browser."
+  :type 'string
   :group 'deft)
 
 (defcustom deft-new-file-format "%Y-%m-%dT%H%M"
@@ -173,7 +171,7 @@ regexp.")
 
 (defvar deft-hash-properties nil
   "Hash containing properties for each file,keyed by filename.
-Properties are `content', `mtime', `title', `tags', `summary'.")
+Properties are `content', `mtime', `date', `title', `tags', `summary'.")
 
 (defvar deft-window-width nil
   "Width of Deft buffer.")
@@ -299,6 +297,24 @@ is the complete regexp."
        (lambda (k) (cl-remove-if #'string-empty-p (split-string k ":")))
        (split-string (match-string 1 contents))))))
 
+(defconst deft-org-ts-regexp "\\(\\([0-9]\\{4\\}\\)-\\([0-9]\\{2\\}\\)-\\([0-9]\\{2\\}\\)\\( +[^]+0-9>\r\n -]+\\)?\\( +\\([0-9]\\{1,2\\}\\):\\([0-9]\\{2\\}\\)\\)?\\)")
+
+(defun deft-org-parse-time-string (s)
+  (unless (string-match deft-org-ts-regexp s)
+    (error "not time string: %s" s))
+  (list
+   0
+   (cond ((match-beginning 8) (string-to-number (match-string 8 s))) (t 0))
+   (cond ((match-beginning 7) (string-to-number (match-string 7 s))) (t 0))
+   (string-to-number (match-string 4 s))
+   (string-to-number (match-string 3 s))
+   (string-to-number (match-string 2 s))))
+
+(defun deft-parse-date (contents)
+  "Parse the given CONTENTS and return the last date time."
+  (when (string-match "#\\+DATE:.*\\(\\[[^]]*\\]\\)\s*$" contents)
+    (encode-time (deft-org-parse-time-string (match-string 1 contents)))))
+
 (defun deft-cache-file (file)
   "Update file cache if FILE exists and outdated."
   (when (file-exists-p file)
@@ -313,12 +329,14 @@ is the complete regexp."
 (defun deft-cache-newer-file (file mtime)
   "Update cached information for FILE with given MTIME."
   (let* ((contents (f-read-text file))
+         (date (or (deft-parse-date contents) mtime))
          (title (deft-parse-title contents))
          (tags (deft-parse-tags contents))
          (summary (string-trim-left
                    (replace-regexp-in-string
                     deft-strip-summary-regexp " " contents))))
     (puthash file `((mtime . ,mtime)
+                    (date . ,date)
                     (contents . ,contents)
                     (title . ,title)
                     (tags . ,tags)
@@ -327,7 +345,7 @@ is the complete regexp."
 
 (defun deft-sort-all-files ()
   "Sort FILES in reverse order by modified time."
-  (sort deft-all-files (lambda (f1 f2) (file-newer-than-file-p f1 f2))))
+  (sort deft-all-files (lambda (f1 f2) (time-less-p (deft-file-date f2) (deft-file-date f1)))))
 
 (defun deft-cache-update-all ()
   "Update file list and update cached information for each file."
@@ -349,6 +367,10 @@ is the complete regexp."
 (defun deft-file-mtime (file)
   "Retrieve modified time of FILE from cache."
   (alist-get 'mtime (gethash file deft-hash-properties)))
+
+(defun deft-file-date (file)
+  "Retrieve date of FILE from cache."
+  (alist-get 'date (gethash file deft-hash-properties)))
 
 (defun deft-file-title (file)
   "Retrieve title of FILE from cache."
@@ -434,10 +456,9 @@ When REFRESH is true, attempt to restore the point afterwards."
   (when file
     (let* ((full-title (deft-file-title file))
            (summary (deft-file-summary file))
-           (mtime (when deft-time-format
-                    (format-time-string deft-time-format (deft-file-mtime file))))
-           (mtime-width (deft-string-width mtime))
-           (line-width (- deft-window-width mtime-width))
+           (time (format-time-string deft-time-format (deft-file-date file)))
+           (time-width (deft-string-width time))
+           (line-width (- deft-window-width time-width))
            (title-width (min line-width (deft-string-width full-title)))
            (title (if full-title
                       (truncate-string-to-width full-title title-width)
@@ -459,10 +480,9 @@ When REFRESH is true, attempt to restore the point afterwards."
         (insert " ")
         (insert (propertize (truncate-string-to-width summary summary-width)
                             'face 'deft-summary-face)))
-      (when mtime
-        (while (< (current-column) line-width)
-          (insert " "))
-        (insert (propertize mtime 'face 'deft-time-face)))
+      (while (< (current-column) line-width)
+        (insert " "))
+      (insert (propertize time 'face 'deft-time-face))
       (insert "\n"))))
 
 (defun deft-open-button (button)
