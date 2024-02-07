@@ -2,8 +2,8 @@
 
 ;;; Author: Jason R. Blevins <jrblevin@xbeta.org>
 ;;;         scturtle <scturtle@gmail.com>
-;;; Version: 0.9
-;;; Package-Requires: ((emacs "28.1"))
+;;; Version: 1.0
+;;; Package-Requires: ((emacs "29.1"))
 ;;; Keywords: files, matching, outlines
 ;;; URL: https://jblevins.org/projects/deft/
 ;;;      https://github.com/scturtle/deft
@@ -30,28 +30,13 @@
   :safe 'stringp
   :group 'deft)
 
-(defcustom deft-extensions
-  (if (boundp 'deft-extension)
-      (cons deft-extension '())
-    '("txt" "text" "md" "markdown" "org"))
-  "Files with these extensions will be listed.
-The first element of the list is used as the default file
-extension of newly created files, if `deft-default-extension' is
-not set."
-  :type '(repeat string)
+(defcustom deft-extension "org"
+  "File extension."
+  :type 'string
   :group 'deft)
 
 (defcustom deft-time-format " %Y-%m-%d %H:%M"
   "Format string for modification times in the Deft browser."
-  :type 'string
-  :group 'deft)
-
-(defcustom deft-new-file-format "%Y-%m-%dT%H%M"
-  "Format string for new file names.
-The default value yields a short ISO-like timestamp, as in
-\"2016-05-12T0900\".  To use a full ISO 8601 time stamp, for
-example, set this variable to \"%FT%T%z\".  See
-`format-time-string' for possible format controls."
   :type 'string
   :group 'deft)
 
@@ -62,33 +47,6 @@ treated as subfilters, each of which must match a file.  They need
 not be adjacent and may appear in any order.  During regexp search, the
 entire filter string is interpreted as a single regular expression."
   :type 'boolean
-  :group 'deft)
-
-(defcustom deft-ignore-file-regexp
-  (concat "\\(?:"
-          "^$"
-          "\\)")
-  "Regular expression for files to be ignored."
-  :type 'regexp
-  :safe 'stringp
-  :group 'deft)
-
-(defcustom deft-strip-title-regexp
-  (concat "\\(?:"
-          "^%+" ; line beg with %
-          "\\|^#\\+TITLE: *" ; org-mode title
-          "\\|^[#* ]+" ; line beg with #, * and/or space
-          "\\|-\\*-[[:alpha:]]+-\\*-" ; -*- .. -*- lines
-          "\\|^Title:[\t ]*" ; MultiMarkdown metadata
-          "\\|#+" ; line with just # chars
-          "$\\)")
-  "Regular expression to remove from file titles.
-Presently, it removes leading LaTeX comment delimiters, leading
-and trailing hash marks from Markdown ATX headings, leading
-astersisks from Org Mode headings, and Emacs mode lines of the
-form -*-mode-*-."
-  :type 'regexp
-  :safe 'stringp
   :group 'deft)
 
 (defcustom deft-strip-summary-regexp
@@ -170,7 +128,7 @@ regexp.")
   "List of all files in `deft-directory'.")
 
 (defvar deft-hash-properties nil
-  "Hash containing properties for each file,keyed by filename.
+  "Hash containing properties for each file, keyed by filename.
 Properties are `content', `mtime', `date', `title', `tags', `summary'.")
 
 (defvar deft-window-width nil
@@ -178,9 +136,6 @@ Properties are `content', `mtime', `date', `title', `tags', `summary'.")
 
 (defvar deft-regexp-error nil
   "Flag for indicating invalid regexp errors.")
-
-(defvar deft-default-extension (copy-sequence (car deft-extensions))
-  "Default file extension of newly created files.")
 
 (defvar deft-pending-updates nil
   "Indicator of pending updates due to automatic saves, etc.")
@@ -276,18 +231,15 @@ is the complete regexp."
           (result nil))
       (dolist (file files)
         (when (and (file-readable-p file)
-                   (not (string-match deft-ignore-file-regexp file))
                    (not (backup-file-name-p file))
-                   (member (file-name-extension file) deft-extensions))
+                   (string= (file-name-extension file) deft-extension))
           (push file result)))
       result)))
 
 (defun deft-parse-title (contents)
   "Parse the given CONTENTS and determine the title."
-  (when-let ((begin (string-match "^.+$" contents)))
-    (let ((title (substring contents begin (match-end 0))))
-      (string-trim
-       (replace-regexp-in-string deft-strip-title-regexp "" title)))))
+  (when (string-match "#\\+TITLE:\\(.+\\)$" contents)
+    (string-trim (match-string 1 contents))))
 
 (defun deft-parse-tags (contents)
   "Parse the given CONTENTS and return list of tags."
@@ -399,14 +351,8 @@ is the complete regexp."
   (insert "\n\n"))
 
 (defun deft-current-window-width ()
-  "Return current width of window displaying `deft-buffer'.
-If the frame has a fringe, it will absorb the newline.
-Otherwise, we reduce the line length by a one-character offset."
-  (let* ((window (get-buffer-window deft-buffer))
-         (fringe-right (ceiling (or (cadr (window-fringes)) 0)))
-         (offset (if (> fringe-right 0) 0 1)))
-    (when window
-      (- (window-text-width window) offset))))
+  "Return current width of window displaying `deft-buffer'."
+  (- (window-text-width (get-buffer-window deft-buffer)) 1))
 
 (defun deft-buffer-render (&optional refresh)
   "Render the file browser in the *Deft* buffer.
@@ -537,7 +483,7 @@ Call this function after any actions which update the filter and file list."
     (setq slug (replace-regexp-in-string " " "_" slug))
     (setq slug (downcase slug))
     (concat (file-name-as-directory (expand-file-name deft-directory))
-            slug "." deft-default-extension)))
+            slug "." deft-extension)))
 
 (defun deft-open-file (file &optional other switch)
   "Open FILE in a new buffer and setting its mode.
@@ -555,6 +501,7 @@ FILE must be a relative or absolute path, with extension."
       (unless (get-buffer deft-buffer)
         (with-current-buffer (get-buffer-create deft-buffer)
           (deft-mode)))
+      ;; Update file after saved
       (add-hook 'after-save-hook
                 (lambda () (save-excursion
                              (deft-cache-update-file buffer-file-name)
@@ -621,8 +568,7 @@ If the point is not on a file button, do nothing."
       (setq new-name (read-string
                       (concat "Rename " old-name " to (without extension): ")
                       old-name))
-      (setq new-filename
-            (concat deft-dir new-name "." deft-default-extension))
+      (setq new-filename (concat deft-dir new-name "." deft-extension))
       (rename-file old-filename new-filename)
       ;; update visiting buffers
       (when-let ((buffer (get-file-buffer (file-truename old-filename))))
