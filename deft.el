@@ -501,6 +501,13 @@ FILE must be a relative or absolute path, with extension."
       (unless (get-buffer deft-buffer)
         (with-current-buffer (get-buffer-create deft-buffer)
           (deft-mode)))
+      ;; update date timestamp on saving
+      (add-hook 'before-save-hook
+                (lambda ()
+                  (save-excursion
+                    (goto-char (point-min))
+                    (when (re-search-forward "^#\\+DATE: \\[.*\\]" nil t)
+                      (replace-match (format-time-string "#+DATE: [%Y-%m-%d %a %H:%M]"))))))
       ;; Update file after saved
       (add-hook 'after-save-hook
                 (lambda () (save-excursion
