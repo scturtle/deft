@@ -30,36 +30,6 @@
   :safe 'stringp
   :group 'deft)
 
-(defcustom deft-extension "org"
-  "File extension."
-  :type 'string
-  :group 'deft)
-
-(defcustom deft-time-format " %Y-%m-%d %H:%M"
-  "Format string for modification times in the Deft browser."
-  :type 'string
-  :group 'deft)
-
-(defcustom deft-incremental-search t
-  "Use incremental string search when non-nil and regexp search when nil.
-During incremental string search, substrings separated by spaces are
-treated as subfilters, each of which must match a file.  They need
-not be adjacent and may appear in any order.  During regexp search, the
-entire filter string is interpreted as a single regular expression."
-  :type 'boolean
-  :group 'deft)
-
-(defcustom deft-strip-summary-regexp
-  (concat "\\("
-          "[\n\t]" ;; blank
-          "\\|^#\\+[[:upper:]_]+:.*$" ;; org-mode metadata
-          "\\)")
-  "Regular expression to remove file contents displayed in summary.
-Presently removes blank lines and `org-mode' metadata statements."
-  :type 'regexp
-  :safe 'stringp
-  :group 'deft)
-
 ;; Faces
 
 (defgroup deft-faces nil
@@ -107,7 +77,25 @@ Presently removes blank lines and `org-mode' metadata statements."
 (defconst deft-buffer "*Deft*"
   "Deft buffer name.")
 
+(defconst deft-extension "org"
+  "File extension.")
+
+(defconst deft-strip-summary-regexp
+  (concat "\\("
+          "[\n\t]" ;; blank
+          "\\|^#\\+[[:upper:]_]+:.*$" ;; org-mode metadata
+          "\\)")
+  "Regular expression to remove file contents displayed in summary.
+Presently removes blank lines and `org-mode' metadata statements.")
+
 ;; Global variables
+
+(defvar deft-incremental-search t
+  "Use incremental string search when non-nil and regexp search when nil.
+During incremental string search, substrings separated by spaces are
+treated as subfilters, each of which must match a file.  They need
+not be adjacent and may appear in any order.  During regexp search, the
+entire filter string is interpreted as a single regular expression.")
 
 (defvar deft-filter-regexp nil
   "A list of string representing the current filter used by Deft.
@@ -402,6 +390,7 @@ When REFRESH is true, attempt to restore the point afterwards."
   (when file
     (let* ((full-title (deft-file-title file))
            (summary (deft-file-summary file))
+           (deft-time-format " %Y-%m-%d %H:%M")
            (time (format-time-string deft-time-format (deft-file-date file)))
            (time-width (deft-string-width time))
            (line-width (- deft-window-width time-width))
@@ -529,7 +518,10 @@ SLUG is the short file name, without a path or a file extension."
   (let ((file (deft-absolute-filename slug)))
     (if (file-exists-p file)
         (message "Aborting, file already exists: %s" file)
-      (write-region (concat "#+TITLE: " slug "\n\n") nil file nil)
+      (write-region (concat "#+TITLE: " slug "\n"
+                            "#+DATE: " (format-time-string "[%Y-%m-%d %a %H:%M]") "\n"
+                            "#+FILETAGS: \n\n")
+                    nil file nil)
       (deft-cache-update-file file)
       (deft-refresh-filter)
       (deft-open-file file)
